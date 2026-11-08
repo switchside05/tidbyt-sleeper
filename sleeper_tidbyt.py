@@ -439,7 +439,7 @@ def push(webp_path):
     if not dev or not tok:
         print("No Tidbyt credentials set; skipping push.")
         return False
-    base = os.environ.get("TIDBYT_API_URL", "https://api.tidbyt.com").rstrip("/")
+    base = (os.environ.get("TIDBYT_API_URL") or "https://api.tidbyt.com").rstrip("/")
     body = {"image": base64.b64encode(open(webp_path, "rb").read()).decode(),
             "installationID": CONFIG.get("installation_id", "sleeperff"), "background": True}
     r = requests.post(f"{base}/v0/devices/{dev}/push", json=body,
