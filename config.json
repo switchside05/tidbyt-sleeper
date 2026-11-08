@@ -7,5 +7,7 @@
     "n7martin": "EMEKA"
   },
   "overview_ms": 4000,
-  "players_ms": 3000
+  "players_ms": 4000,
+  "max_app_ms": 14500,
+  "app_count": 2
 }
