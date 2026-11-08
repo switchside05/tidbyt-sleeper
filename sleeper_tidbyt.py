@@ -91,6 +91,40 @@ def fit(font, s, max_w):
     return s.rstrip(" .")
 
 
+# Thick 2px-stroke digits for the big matchup scores (6x10; "1" is 4 wide).
+BOLD_DIGITS = {
+    "0": [".####.", "######", "##..##", "##..##", "##..##", "##..##", "##..##", "##..##", "######", ".####."],
+    "1": ["..##", ".###", "####", "..##", "..##", "..##", "..##", "..##", "..##", "..##"],
+    "2": [".####.", "######", "##..##", "....##", "...###", "..###.", ".###..", "###...", "######", "######"],
+    "3": [".####.", "######", "##..##", "....##", "..###.", "..####", "....##", "##..##", "######", ".####."],
+    "4": ["...###", "..####", ".##.##", "##..##", "##..##", "######", "######", "....##", "....##", "....##"],
+    "5": ["######", "######", "##....", "#####.", "######", "....##", "....##", "##..##", "######", ".####."],
+    "6": [".####.", "######", "##....", "#####.", "######", "##..##", "##..##", "##..##", "######", ".####."],
+    "7": ["######", "######", "....##", "...##.", "...##.", "..##..", "..##..", "..##..", "..##..", "..##.."],
+    "8": [".####.", "######", "##..##", "##..##", ".####.", "######", "##..##", "##..##", "######", ".####."],
+    "9": [".####.", "######", "##..##", "##..##", "######", ".#####", "....##", "....##", "######", ".####."],
+    ".": ["..", "..", "..", "..", "..", "..", "..", "..", "##", "##"],
+    "-": ["....", "....", "....", "....", "####", "####", "....", "....", "....", "...."],
+}
+BOLD_H = 10
+
+
+def bold_width(s):
+    return sum(len(BOLD_DIGITS[c][0]) + 1 for c in s) - 1 if s else 0
+
+
+def draw_bold(img, s, x, y, color):
+    px = img.load()
+    for ch in s:
+        g = BOLD_DIGITS[ch]
+        for r, row in enumerate(g):
+            for c, v in enumerate(row):
+                if v == "#" and 0 <= x + c < W and 0 <= y + r < H:
+                    px[x + c, y + r] = color
+        x += len(g[0]) + 1
+    return x
+
+
 def fmt_pts(p):
     return f"{p:.1f}"
 
@@ -348,10 +382,13 @@ def screen_overview(m):
         nm = fit(TINY, t_["name"], half - 1)
         draw_text(img, TINY, nm, x0 + (half - text_width(TINY, nm)) // 2, 8, col_name)
         s_ = fmt_pts(t_["points"])
-        draw_text(img, BIG, s_, x0 + (half - text_width(BIG, s_)) // 2, 15, col)
+        if all(ch in BOLD_DIGITS for ch in s_) and bold_width(s_) <= half:
+            draw_bold(img, s_, x0 + (half - bold_width(s_)) // 2, 14, col)
+        else:
+            draw_text(img, BIG, s_, x0 + (half - text_width(BIG, s_)) // 2, 15, col)
         if t_.get("proj") is not None:
             p = "P" + fmt_pts(t_["proj"])
-            draw_text(img, TINY, p, x0 + (half - text_width(TINY, p)) // 2, 26, GRAY)
+            draw_text(img, TINY, p, x0 + (half - text_width(TINY, p)) // 2, 27, GRAY)
     return img
 
 
