@@ -434,14 +434,14 @@ def preview_png(frames, durs, path, scale=8):
     sheet.save(path)
 
 
-def push(webp_path):
+def push(webp_path, installation_id):
     dev, tok = os.environ.get("TIDBYT_DEVICE_ID"), os.environ.get("TIDBYT_API_TOKEN")
     if not dev or not tok:
         print("No Tidbyt credentials set; skipping push.")
         return False
     base = (os.environ.get("TIDBYT_API_URL") or "https://api.tidbyt.com").rstrip("/")
     body = {"image": base64.b64encode(open(webp_path, "rb").read()).decode(),
-            "installationID": CONFIG.get("installation_id", "sleeperff"), "background": True}
+            "installationID": installation_id, "background": True}
     r = requests.post(f"{base}/v0/devices/{dev}/push", json=body,
                       headers={"Authorization": f"Bearer {tok}"}, timeout=30)
     print("Tidbyt push:", r.status_code, r.text[:200])
@@ -461,16 +461,39 @@ def main():
     now = dt.datetime.fromisoformat(a.now).astimezone(TZ) if a.now else None
     model = build_model(data, now)
     print(json.dumps({k: v for k, v in model.items() if k != "updated"}, indent=1, default=str))
-    frames, durs = animate(build_screens(model))
-    webp = os.path.join(a.out, "sleeper.webp")
-    save_webp(frames, durs, webp)
-    frames[0].save(os.path.join(a.out, "preview.gif"), save_all=True, append_images=frames[1:],
-                   duration=durs, loop=0)
-    preview_png(frames, durs, os.path.join(a.out, "preview.png"))
-    print(f"Rendered {len(frames)} frames, {sum(durs)/1000:.1f}s, {os.path.getsize(webp)} bytes")
+    screens = build_screens(model)
+    # Tidbyt cuts pushed apps off at 15s, so split the screens into apps that each fit.
+    budget = CONFIG.get("max_app_ms", 14500)
+    apps, cur, used = [], [], 0
+    for scr in screens:
+        need = scr[1] + (280 if cur else 0)
+        if cur and used + need > budget:
+            apps.append(cur)
+            cur, used = [], 0
+            need = scr[1]
+        cur.append(scr)
+        used += need
+    apps.append(cur)
+    n_apps = CONFIG.get("app_count", 2)
+    while len(apps) < n_apps:          # keep every installation fresh (e.g. bye week)
+        apps.append(apps[-1])
+    all_frames, all_durs = [], []
+    paths = []
+    for i, app in enumerate(apps):
+        frames, durs = animate(app)
+        p = os.path.join(a.out, f"sleeper{i + 1}.webp")
+        save_webp(frames, durs, p)
+        paths.append(p)
+        all_frames += frames
+        all_durs += durs
+        print(f"App {i + 1}: {len(frames)} frames, {sum(durs)/1000:.1f}s, {os.path.getsize(p)} bytes")
+    all_frames[0].save(os.path.join(a.out, "preview.gif"), save_all=True, append_images=all_frames[1:],
+                       duration=all_durs, loop=0)
+    preview_png(all_frames, all_durs, os.path.join(a.out, "preview.png"))
     if not a.no_push:
-        push(webp)
-
+        base_id = CONFIG.get("installation_id", "sleeperff")
+        for i, p in enumerate(paths):
+            push(p, base_id if i == 0 else f"{base_id}{i + 1}")
 
 if __name__ == "__main__":
     sys.exit(main())
