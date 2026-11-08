@@ -3,22 +3,24 @@ name: Update Tidbyt
 on:
   workflow_dispatch: {}
   schedule:
-    # Times are UTC. Every 5 min during NFL game windows (covers CST and CDT):
-    - cron: "*/5 16-23 * * 0"   # Sunday early + late games
-    - cron: "*/5 0-5 * * 1"     # Sunday night football
-    - cron: "*/5 23 * * 1,4"    # Monday / Thursday night kickoff hour
-    - cron: "*/5 0-5 * * 2,5"   # Monday / Thursday night games
-    - cron: "*/15 17-23 * * 6"  # Saturday games (late season)
-    - cron: "0 */6 * * *"       # Every 6 hours otherwise (new week, final scores)
+    # Times are UTC. Each run refreshes the Tidbyt every 60 seconds for as long as
+    # a game is live (or kicks off within the hour), then stops on its own.
+    # These starts just make sure a run is going during NFL game windows.
+    - cron: "5,35 16-23 * * 0"   # Sunday early + late games
+    - cron: "5,35 0-4 * * 1"     # Sunday night football
+    - cron: "5,35 23 * * 1,4"    # Monday / Thursday night
+    - cron: "5,35 0-4 * * 2,5"   # Monday / Thursday night
+    - cron: "5,35 17-23 * * 6"   # Saturday games (late season)
+    - cron: "17 */6 * * *"       # Off-hours check: new week, final scores
 
 concurrency:
   group: tidbyt
-  cancel-in-progress: true
+  cancel-in-progress: false      # never kill a running live loop; extra starts wait their turn
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,14 +34,9 @@ jobs:
           key: players-${{ github.run_id }}
           restore-keys: players-
       - run: pip install -r requirements.txt
-      - name: Render and push to Tidbyt
+      - name: Refresh Tidbyt every minute while games are on
         env:
           TIDBYT_DEVICE_ID: ${{ secrets.TIDBYT_DEVICE_ID }}
           TIDBYT_API_TOKEN: ${{ secrets.TIDBYT_API_TOKEN }}
           TIDBYT_API_URL: ${{ vars.TIDBYT_API_URL }}
-        run: python sleeper_tidbyt.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: preview
-          path: out/
-          retention-days: 2
+        run: python sleeper_tidbyt.py --loop --interval 60 --max-minutes 345
