@@ -1,0 +1,45 @@
+name: Update Tidbyt
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Times are UTC. Every 5 min during NFL game windows (covers CST and CDT):
+    - cron: "*/5 16-23 * * 0"   # Sunday early + late games
+    - cron: "*/5 0-5 * * 1"     # Sunday night football
+    - cron: "*/5 23 * * 1,4"    # Monday / Thursday night kickoff hour
+    - cron: "*/5 0-5 * * 2,5"   # Monday / Thursday night games
+    - cron: "*/15 17-23 * * 6"  # Saturday games (late season)
+    - cron: "0 */6 * * *"       # Every 6 hours otherwise (new week, final scores)
+
+concurrency:
+  group: tidbyt
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Cache Sleeper player list (refreshed daily)
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: players-${{ github.run_id }}
+          restore-keys: players-
+      - run: pip install -r requirements.txt
+      - name: Render and push to Tidbyt
+        env:
+          TIDBYT_DEVICE_ID: ${{ secrets.TIDBYT_DEVICE_ID }}
+          TIDBYT_API_TOKEN: ${{ secrets.TIDBYT_API_TOKEN }}
+          TIDBYT_API_URL: ${{ vars.TIDBYT_API_URL }}
+        run: python sleeper_tidbyt.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview
+          path: out/
+          retention-days: 2
