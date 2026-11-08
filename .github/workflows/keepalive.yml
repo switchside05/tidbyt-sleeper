@@ -1,0 +1,25 @@
+name: Keep schedule alive
+
+# GitHub pauses scheduled workflows in public repos after 60 days with no activity.
+# This makes a tiny commit twice a month so the Tidbyt updates never get paused.
+on:
+  schedule:
+    - cron: "23 15 1,15 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record a heartbeat
+        run: |
+          date -u > .keepalive
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "Keep scheduled Tidbyt updates active" || exit 0
+          git push
