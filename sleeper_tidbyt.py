@@ -154,6 +154,20 @@ def fetch_live():
                 matchups=matchups, players=players, espn=espn, projections=projections)
 
 
+def next_kickoff(espn):
+    """Earliest not-yet-started kickoff (aware datetime) or None."""
+    best = None
+    for ev in espn.get("events", []):
+        if ev.get("status", {}).get("type", {}).get("state") != "pre":
+            continue
+        try:
+            k = dt.datetime.fromisoformat(ev["date"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        best = k if best is None or k < best else best
+    return best
+
+
 def game_status(espn):
     """team abbr -> dict(state=pre|in|post, label=short text)"""
     out = {}
@@ -449,18 +463,12 @@ def push(webp_path, installation_id):
     return True
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--fixture")
-    ap.add_argument("--now", help="ISO time to pretend it is (testing)")
-    ap.add_argument("--no-push", action="store_true")
-    ap.add_argument("--out", default=os.path.join(HERE, "out"))
-    a = ap.parse_args()
-    os.makedirs(a.out, exist_ok=True)
+def run_once(a):
     data = json.load(open(a.fixture)) if a.fixture else fetch_live()
     now = dt.datetime.fromisoformat(a.now).astimezone(TZ) if a.now else None
     model = build_model(data, now)
-    print(json.dumps({k: v for k, v in model.items() if k != "updated"}, indent=1, default=str))
+    mu = model.get("matchup") or {}
+    print(dt.datetime.now(TZ).strftime("%H:%M:%S"), model.get("phase"), {k: (v.get("points"), round(v["proj"], 2) if v.get("proj") is not None else None) for k, v in mu.items()})
     screens = build_screens(model)
     # Tidbyt cuts pushed apps off at 15s, so split the screens into apps that each fit.
     budget = CONFIG.get("max_app_ms", 14500)
@@ -494,6 +502,47 @@ def main():
         base_id = CONFIG.get("installation_id", "sleeperff")
         for i, p in enumerate(paths):
             push(p, base_id if i == 0 else f"{base_id}{i + 1}")
+    return model, data
+
+
+def keep_going(model, data):
+    """True while a game is live or one kicks off within the next hour."""
+    if model.get("phase") == "LIVE":
+        return True
+    k = next_kickoff((data or {}).get("espn") or {})
+    return bool(k and k - dt.datetime.now(dt.timezone.utc) < dt.timedelta(minutes=60))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fixture")
+    ap.add_argument("--now", help="ISO time to pretend it is (testing)")
+    ap.add_argument("--no-push", action="store_true")
+    ap.add_argument("--loop", action="store_true", help="refresh every --interval seconds while games are on")
+    ap.add_argument("--interval", type=int, default=60)
+    ap.add_argument("--max-minutes", type=float, default=345)
+    ap.add_argument("--out", default=os.path.join(HERE, "out"))
+    a = ap.parse_args()
+    os.makedirs(a.out, exist_ok=True)
+    if not a.loop:
+        run_once(a)
+        return 0
+    start = time.time()
+    while True:
+        t0 = time.time()
+        try:
+            model, data = run_once(a)
+            go = keep_going(model, data)
+        except Exception as e:  # network blip: keep the last image, try again next minute
+            print("Update failed, will retry:", repr(e))
+            go = True
+        if not go:
+            print("No live or upcoming games; stopping until the next scheduled start.")
+            return 0
+        if (time.time() - start) / 60 > a.max_minutes:
+            print("Reached max run time; the next scheduled run takes over.")
+            return 0
+        time.sleep(max(5, a.interval - (time.time() - t0)))
 
 if __name__ == "__main__":
     sys.exit(main())
