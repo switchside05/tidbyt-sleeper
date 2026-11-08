@@ -398,8 +398,12 @@ STATUS_COL = {"in": YELLOW, "post": GRAY, "pre": GRAY, "bye": GRAY, "out": RED, 
 
 def draw_player(img, p, y):
     pts = fmt_pts(p["pts"])
-    pw = text_width(BIG, pts)
-    draw_text(img, BIG, pts, W - pw, y + 4, PTS_COL.get(p["state"], WHITE))
+    if all(ch in BOLD_DIGITS for ch in pts) and bold_width(pts) <= 26:
+        pw = bold_width(pts)
+        draw_bold(img, pts, W - pw, y + 2, PTS_COL.get(p["state"], WHITE))
+    else:
+        pw = text_width(BIG, pts)
+        draw_text(img, BIG, pts, W - pw, y + 4, PTS_COL.get(p["state"], WHITE))
     left_max = W - pw - 3
     draw_text(img, TINY, fit(TINY, p["name"], left_max), 0, y + 1, WHITE)
     x = draw_text(img, TINY, p["pos"][:3], 0, y + 8, POS_COLORS.get(p["pos"], GRAY))
