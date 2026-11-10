@@ -3,19 +3,24 @@ name: Update Tidbyt
 on:
   workflow_dispatch: {}
   schedule:
-    # Times are UTC. Each run refreshes the Tidbyt every 60 seconds for as long as
-    # a game is live (or kicks off within the hour), then stops on its own.
-    # These starts just make sure a run is going during NFL game windows.
+    # Times are UTC. A run refreshes the Tidbyt every 60 seconds while a game is
+    # live or one kicks off within ~6 hours, then stops on its own. When a run hits
+    # GitHub's 6-hour limit it starts a fresh one, so coverage never has gaps.
+    # GitHub sometimes skips scheduled starts, so there are plenty of them.
     - cron: "5,35 16-23 * * 0"   # Sunday early + late games
     - cron: "5,35 0-4 * * 1"     # Sunday night football
-    - cron: "5,35 23 * * 1,4"    # Monday / Thursday night
+    - cron: "5,35 22-23 * * 1,4" # Monday / Thursday night
     - cron: "5,35 0-4 * * 2,5"   # Monday / Thursday night
     - cron: "5,35 17-23 * * 6"   # Saturday games (late season)
-    - cron: "17 */6 * * *"       # Off-hours check: new week, final scores
+    - cron: "17 */2 * * *"       # Every 2 hours: catches upcoming games if the above are skipped
 
 concurrency:
   group: tidbyt
   cancel-in-progress: false      # never kill a running live loop; extra starts wait their turn
+
+permissions:
+  contents: read
+  actions: write                 # lets a run start its own replacement at the 6-hour limit
 
 jobs:
   update:
@@ -36,7 +41,13 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Refresh Tidbyt every minute while games are on
         env:
+          PYTHONUNBUFFERED: "1"
           TIDBYT_DEVICE_ID: ${{ secrets.TIDBYT_DEVICE_ID }}
           TIDBYT_API_TOKEN: ${{ secrets.TIDBYT_API_TOKEN }}
           TIDBYT_API_URL: ${{ vars.TIDBYT_API_URL }}
-        run: python sleeper_tidbyt.py --loop --interval 60 --max-minutes 345
+        run: python sleeper_tidbyt.py --loop --interval 60 --max-minutes 340
+      - name: Start a fresh run if this one hit the time limit
+        if: ${{ hashFiles('out/relaunch') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run update-tidbyt.yml --ref main
