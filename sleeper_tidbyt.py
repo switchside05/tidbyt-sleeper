@@ -546,12 +546,14 @@ def run_once(a):
     return model, data
 
 
-def keep_going(model, data):
-    """True while a game is live or one kicks off within the next hour."""
+def keep_going(model, data, lookahead_min=375):
+    """True while a game is live or one kicks off within the lookahead window
+    (long enough that any off-hours check covers the next game, even if
+    GitHub skips the game-window starts)."""
     if model.get("phase") == "LIVE":
         return True
     k = next_kickoff((data or {}).get("espn") or {})
-    return bool(k and k - dt.datetime.now(dt.timezone.utc) < dt.timedelta(minutes=60))
+    return bool(k and k - dt.datetime.now(dt.timezone.utc) < dt.timedelta(minutes=lookahead_min))
 
 
 def main():
@@ -562,6 +564,7 @@ def main():
     ap.add_argument("--loop", action="store_true", help="refresh every --interval seconds while games are on")
     ap.add_argument("--interval", type=int, default=60)
     ap.add_argument("--max-minutes", type=float, default=345)
+    ap.add_argument("--lookahead-minutes", type=float, default=375)
     ap.add_argument("--out", default=os.path.join(HERE, "out"))
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -573,7 +576,7 @@ def main():
         t0 = time.time()
         try:
             model, data = run_once(a)
-            go = keep_going(model, data)
+            go = keep_going(model, data, a.lookahead_minutes)
         except Exception as e:  # network blip: keep the last image, try again next minute
             print("Update failed, will retry:", repr(e))
             go = True
@@ -581,7 +584,9 @@ def main():
             print("No live or upcoming games; stopping until the next scheduled start.")
             return 0
         if (time.time() - start) / 60 > a.max_minutes:
-            print("Reached max run time; the next scheduled run takes over.")
+            # GitHub caps a run at 6h; ask the workflow to start a fresh run right away.
+            open(os.path.join(a.out, "relaunch"), "w").write("1")
+            print("Reached max run time; relaunching a fresh run.")
             return 0
         time.sleep(max(5, a.interval - (time.time() - t0)))
 
