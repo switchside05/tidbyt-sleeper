@@ -202,6 +202,43 @@ def next_kickoff(espn):
     return best
 
 
+def event_kickoffs(espn):
+    """[(kickoff aware dt in local TZ, set of team abbrs)] for this week's games."""
+    out = []
+    for ev in espn.get("events", []):
+        try:
+            k = dt.datetime.fromisoformat(ev["date"].replace("Z", "+00:00")).astimezone(TZ)
+        except Exception:
+            continue
+        teams = {ESPN_ABBR.get(c.get("team", {}).get("abbreviation", ""), c.get("team", {}).get("abbreviation", ""))
+                 for c in ev.get("competitions", [{}])[0].get("competitors", [])}
+        out.append((k, teams))
+    return out
+
+
+def display_window(espn, my_teams):
+    """When the Sleeper screens should be on the Tidbyt this NFL week.
+
+    Starts Sunday; Saturday if the week has Saturday games; or earlier
+    (Thursday/Friday) only if one of my starters plays that day.
+    Ends Tuesday 3am local, after Monday night's game."""
+    games = event_kickoffs(espn)
+    sundays = [k.date() for k, _ in games if k.weekday() == 6]
+    if not sundays:
+        return None
+    sunday = min(sundays)
+    start_day = sunday
+    for k, teams in games:
+        d = k.date()
+        if d >= sunday or (sunday - d).days > 4:
+            continue
+        if k.weekday() == 5 or (teams & my_teams):   # any Saturday game, or my player plays Thu/Fri
+            start_day = min(start_day, d)
+    start = dt.datetime.combine(start_day, dt.time(0, 0), TZ)
+    end = dt.datetime.combine(sunday + dt.timedelta(days=2), dt.time(3, 0), TZ)
+    return start, end
+
+
 def game_status(espn):
     """team abbr -> dict(state=pre|in|post, label=short text)"""
     out = {}
@@ -344,6 +381,8 @@ def build_model(d, now=None):
         phase = ""
     else:
         phase = "PRE" if all(g["state"] == "pre" for g in games.values()) else "BREAK"
+    model["my_teams"] = sorted({p["team"] for p in starters if p["team"] and p["pos"] != "DEF"} |
+                               {p["team"] for p in starters if p["pos"] == "DEF"})
     model.update(matchup={"me": team(me), "opp": team(opp) if opp else {"name": "BYE", "points": 0.0, "proj": None}},
                  starters=starters, phase=phase, mine_left=sum(s in ("pre",) for s in states))
     return model
@@ -504,6 +543,17 @@ def push(webp_path, installation_id):
     return True
 
 
+def remove(installation_id):
+    """Take a Sleeper app off the Tidbyt rotation (no-op if it's already gone)."""
+    dev, tok = os.environ.get("TIDBYT_DEVICE_ID"), os.environ.get("TIDBYT_API_TOKEN")
+    if not dev or not tok:
+        return
+    base = (os.environ.get("TIDBYT_API_URL") or "https://api.tidbyt.com").rstrip("/")
+    r = requests.delete(f"{base}/v0/devices/{dev}/installations/{installation_id}",
+                        headers={"Authorization": f"Bearer {tok}"}, timeout=30)
+    print("Tidbyt remove", installation_id + ":", r.status_code)
+
+
 def run_once(a):
     data = json.load(open(a.fixture)) if a.fixture else fetch_live()
     now = dt.datetime.fromisoformat(a.now).astimezone(TZ) if a.now else None
@@ -539,10 +589,22 @@ def run_once(a):
     all_frames[0].save(os.path.join(a.out, "preview.gif"), save_all=True, append_images=all_frames[1:],
                        duration=all_durs, loop=0)
     preview_png(all_frames, all_durs, os.path.join(a.out, "preview.png"))
-    if not a.no_push:
-        base_id = CONFIG.get("installation_id", "sleeperff")
-        for i, p in enumerate(paths):
-            push(p, base_id if i == 0 else f"{base_id}{i + 1}")
+    base_id = CONFIG.get("installation_id", "sleeperff")
+    ids = [base_id if i == 0 else f"{base_id}{i + 1}" for i in range(len(paths))]
+    win = display_window((data or {}).get("espn") or {}, set(model.get("my_teams") or []))
+    now = model["updated"]
+    model["visible"] = bool(win and win[0] <= now < win[1]) or not CONFIG.get("weekly_schedule", True)
+    if win:
+        print("Show window:", win[0].strftime("%a %m/%d %I:%M%p"), "to", win[1].strftime("%a %m/%d %I:%M%p"),
+              "| visible now:", model["visible"])
+    if a.no_push:
+        return model, data
+    if model["visible"]:
+        for p, iid in zip(paths, ids):
+            push(p, iid)
+    else:
+        for iid in ids:
+            remove(iid)
     return model, data
 
 
@@ -576,7 +638,7 @@ def main():
         t0 = time.time()
         try:
             model, data = run_once(a)
-            go = keep_going(model, data, a.lookahead_minutes)
+            go = model.get("visible", True) and keep_going(model, data, a.lookahead_minutes)
         except Exception as e:  # network blip: keep the last image, try again next minute
             print("Update failed, will retry:", repr(e))
             go = True
