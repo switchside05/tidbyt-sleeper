@@ -10,5 +10,6 @@
   "players_ms": 4000,
   "max_app_ms": 14500,
   "app_count": 2,
-  "weekly_schedule": false
+  "weekly_schedule": true,
+  "offday_ms": 10000
 }
