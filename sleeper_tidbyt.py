@@ -528,17 +528,35 @@ def preview_png(frames, durs, path, scale=8):
     sheet.save(path)
 
 
-def push(webp_path, installation_id):
+def installed_ids():
+    """IDs of the apps currently on the Tidbyt, or None if Tidbyt won't say."""
+    dev, tok = os.environ.get("TIDBYT_DEVICE_ID"), os.environ.get("TIDBYT_API_TOKEN")
+    if not dev or not tok:
+        return None
+    base = (os.environ.get("TIDBYT_API_URL") or "https://api.tidbyt.com").rstrip("/")
+    try:
+        r = requests.get(f"{base}/v0/devices/{dev}/installations",
+                         headers={"Authorization": f"Bearer {tok}"}, timeout=30)
+        r.raise_for_status()
+        ids = [i.get("id") for i in (r.json().get("installations") or [])]
+        print("Apps on Tidbyt:", ids)
+        return ids
+    except Exception as e:
+        print("Could not list Tidbyt apps:", repr(e))
+        return None
+
+
+def push(webp_path, installation_id, background=True):
     dev, tok = os.environ.get("TIDBYT_DEVICE_ID"), os.environ.get("TIDBYT_API_TOKEN")
     if not dev or not tok:
         print("No Tidbyt credentials set; skipping push.")
         return False
     base = (os.environ.get("TIDBYT_API_URL") or "https://api.tidbyt.com").rstrip("/")
     body = {"image": base64.b64encode(open(webp_path, "rb").read()).decode(),
-            "installationID": installation_id, "background": True}
+            "installationID": installation_id, "background": background}
     r = requests.post(f"{base}/v0/devices/{dev}/push", json=body,
                       headers={"Authorization": f"Bearer {tok}"}, timeout=30)
-    print("Tidbyt push:", r.status_code, r.text[:200])
+    print("Tidbyt push", installation_id, "(background)" if background else "(re-added)", r.status_code, r.text[:200])
     r.raise_for_status()
     return True
 
@@ -600,8 +618,11 @@ def run_once(a):
     if a.no_push:
         return model, data
     if model["visible"]:
+        # A quiet background update doesn't bring back an app that was removed,
+        # so (re)add any missing Sleeper app with a normal push.
+        on_device = installed_ids()
         for p, iid in zip(paths, ids):
-            push(p, iid)
+            push(p, iid, background=on_device is not None and iid in on_device)
     else:
         for iid in ids:
             remove(iid)
