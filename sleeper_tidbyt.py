@@ -178,6 +178,12 @@ def fetch_live():
         print("ESPN unavailable (game status only):", e)
         espn = {"events": []}
     try:
+        espn_next = get(ESPN, params={"week": week + 1, "seasontype": 3 if state.get("season_type") == "post" else 2,
+                                      "dates": state.get("season")})
+    except Exception as e:
+        print("ESPN next week unavailable:", e)
+        espn_next = {"events": []}
+    try:
         pos = "&".join(f"position[]={p}" for p in ("QB", "RB", "WR", "TE", "K", "DEF"))
         stype = "post" if state.get("season_type") == "post" else "regular"
         projections = get(f"https://api.sleeper.app/projections/nfl/{state.get('season')}/{week}?season_type={stype}&{pos}")
@@ -185,7 +191,7 @@ def fetch_live():
         print("Projections unavailable:", e)
         projections = None
     return dict(state=state, league=league, users=users, rosters=rosters,
-                matchups=matchups, players=players, espn=espn, projections=projections)
+                matchups=matchups, players=players, espn=espn, espn_next=espn_next, projections=projections)
 
 
 def next_kickoff(espn):
@@ -471,6 +477,23 @@ def screen_message(title, sub):
     return img
 
 
+def screen_next(start, week):
+    """Off-day card: when the live scoreboard comes back."""
+    img = blank()
+    head = "LIVE SCORES"
+    draw_text(img, TINY, head, (W - text_width(TINY, head)) // 2, 1, (80, 200, 255))
+    if start:
+        day, date = start.strftime("%a").upper(), start.strftime("%b %d").upper().replace(" 0", " ")
+        big = "BACK " + day
+    else:
+        big, date = "BACK SOON", ""
+    bw = text_width(BIG, big)
+    draw_text(img, BIG, fit(BIG, big, W), max(0, (W - bw) // 2), 11, WHITE)
+    if date:
+        draw_text(img, TINY, date, (W - text_width(TINY, date)) // 2, 22, GRAY)
+    return img
+
+
 def build_screens(m):
     if m.get("error"):
         return [(screen_message("ERROR", m["error"]), 10000)]
@@ -617,15 +640,27 @@ def run_once(a):
               "| visible now:", model["visible"])
     if a.no_push:
         return model, data
-    if model["visible"]:
-        # A quiet background update doesn't bring back an app that was removed,
-        # so (re)add any missing Sleeper app with a normal push.
-        on_device = installed_ids()
-        for p, iid in zip(paths, ids):
-            push(p, iid, background=on_device is not None and iid in on_device)
-    else:
-        for iid in ids:
-            remove(iid)
+    if not model["visible"]:
+        # Off day: keep both apps (and your pins) but show one short card each.
+        nxt = None
+        my = set(model.get("my_teams") or [])
+        for w in (win, display_window((data or {}).get("espn_next") or {}, my)):
+            if w and w[0] > now:
+                nxt = w[0]
+                break
+        paths = []
+        cards = [screen_overview(model) if model.get("matchup") else screen_message("SLEEPER", f"WEEK {model['week']}"),
+                 screen_next(nxt, model.get("week"))]
+        for i, card in enumerate(cards[:len(ids)]):
+            p = os.path.join(a.out, f"offday{i + 1}.webp")
+            save_webp([card], [CONFIG.get("offday_ms", 10000)], p)
+            paths.append(p)
+        print("Off day: showing short cards; next live window starts", nxt.strftime("%a %m/%d") if nxt else "unknown")
+    # A quiet background update doesn't bring back an app that was removed,
+    # so (re)add any missing Sleeper app with a normal push.
+    on_device = installed_ids()
+    for p, iid in zip(paths, ids):
+        push(p, iid, background=on_device is not None and iid in on_device)
     return model, data
 
 
